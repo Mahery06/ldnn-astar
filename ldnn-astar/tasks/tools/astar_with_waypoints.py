@@ -219,7 +219,7 @@ def llm_astar(start, goal, env, waypoints=None, grid_w=50, grid_h=30, open_recor
             if nb not in g_score or gt < g_score[nb]:
                 came_from[nb] = cur
                 g_score[nb] = gt
-                heapq.heappush(open_set, (gt + h_goal(nb) + h_target(nb), gt, nb))
+                heapq.heappush(open_set, (gt + alpha*h_goal(nb) + beta*h_target(nb), gt, nb))
                 if open_recorder is not None:
                     open_recorder.add(nb)
 

@@ -1,0 +1,215 @@
+    <!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LDNN-A* · 混合路径规划器介绍</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2430; --muted:#5b6472;
+    --line:#e6e8ee; --accent:#2563eb; --accent-soft:#eaf1ff;
+    --green:#16a34a; --amber:#d97706; --purple:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.65}
+  .wrap{max-width:960px;margin:0 auto;padding:40px 20px 80px}
+  header{text-align:center;padding:40px 0 28px}
+  .logo{font-size:42px;font-weight:800;letter-spacing:-.5px}
+  .logo em{font-style:normal;color:var(--accent)}
+  .tagline{color:var(--muted);margin-top:10px;font-size:16px}
+  .badges{margin-top:18px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
+  .badge{background:var(--accent-soft);color:var(--accent);font-size:13px;
+         padding:4px 12px;border-radius:999px;font-weight:600}
+  h2{font-size:22px;margin:0 0 16px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+        padding:24px 26px;margin-bottom:20px;box-shadow:0 1px 2px rgba(20,30,60,.04)}
+  .abstract{font-size:15px;color:#3a4356;border-left:4px solid var(--accent);
+            padding-left:18px;margin:0}
+  .grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fit,minmax(200px,1fr))}
+  .step{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .step .n{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;
+           border-radius:50%;background:var(--accent);color:#fff;font-weight:700;font-size:13px;margin-bottom:10px}
+  .step b{display:block;font-size:15px;margin-bottom:6px}
+  .step p{margin:0;font-size:13px;color:var(--muted)}
+  .pipe{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin:18px 0 6px}
+  .pipe .node{background:var(--card);border:1.5px solid var(--line);border-radius:10px;
+              padding:10px 16px;font-size:14px;font-weight:600}
+  .pipe .node.hl{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+  .pipe .arrow{color:var(--muted);font-size:18px}
+  pre{background:#0f172a;color:#dbe4f0;border-radius:10px;padding:18px 20px;
+      overflow-x:auto;font-size:13px;line-height:1.6;font-family:"JetBrains Mono",Consolas,monospace}
+  pre .c{color:#7d8aa0}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{color:var(--muted);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+  td code, .card code{background:#f0f2f6;padding:1px 6px;border-radius:5px;font-size:12.5px;
+      font-family:Consolas,monospace;color:#334155}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:7px}
+  .dot.g{background:var(--green)}.dot.a{background:var(--amber)}.dot.p{background:var(--purple)}
+  .note{font-size:13px;color:var(--muted);margin-top:14px}
+  footer{text-align:center;color:var(--muted);font-size:13px;margin-top:30px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">LDNN<em>-A*</em></div>
+    <div class="tagline">大语言模型 + 轻量神经网络 + 自适应加权 A* 的混合路径规划器</div>
+    <div class="badges">
+      <span class="badge">LLM 候选路径点</span>
+      <span class="badge">DNN 局部几何评估</span>
+      <span class="badge">LSTM 序列评估</span>
+      <span class="badge">三阶段过滤</span>
+      <span class="badge">自适应加权 A*</span>
+    </div>
+  </header>
+
+  <section class="card">
+    <h2>摘要</h2>
+    <p class="abstract">
+      A* 是网格地图路径规划的标准算法，但其扩展和存储的节点数量会随地图尺寸与障碍物复杂度迅速增长，
+      限制了它在资源受限智能体上的使用。近期工作通过让大语言模型（LLM）提出中间路径点、把搜索切分为更短片段来降低开销。
+      然而 LLM 对空间的推理能力较弱，提出的路径点常出现错位或冗余，导致绕路、甚至比纯 A* 产生更多搜索开销。
+      本文提出 <strong>LDNN-A*</strong>：LLM 仅负责提出候选路径点，由轻量神经网络评估器决定保留哪些——
+      一个深度神经网络（DNN）评估每个候选点的局部几何，一个长短期记忆网络（LSTM）评估整条路径点序列。
+      选出的路径点再经三阶段过滤器剪枝，最终由自适应加权 A* 搜索连接。
+    </p>
+  </section>
+
+  <section class="card">
+    <h2>整体流程</h2>
+    <div class="pipe">
+      <span class="node">LLM 生成候选路径点</span>
+      <span class="arrow">→</span>
+      <span class="node">DNN / LSTM 打分</span>
+      <span class="arrow">→</span>
+      <span class="node">三阶段过滤剪枝</span>
+      <span class="arrow">→</span>
+      <span class="node hl">自适应加权 A* 连接</span>
+    </div>
+    <div class="grid" style="margin-top:18px">
+      <div class="step">
+        <span class="n">1</span>
+        <b>LLM 提出候选点</b>
+        <p>DeepSeek 模型根据起点、终点与障碍物布局，在束搜索树中逐层生成 4 个候选路径点，每层保留 Top-3。</p>
+      </div>
+      <div class="step">
+        <span class="n">2</span>
+        <b>神经网络打分</b>
+        <p>DNN 评估「远离前点 + 靠近终点」的局部几何；路径点 ≥4 时，LSTM 再评估整段序列质量。</p>
+      </div>
+      <div class="step">
+        <span class="n">3</span>
+        <b>三阶段过滤</b>
+        <p>去重 → LLM 复审过滤 → 几何转角过滤（>90° 剔除），再直接连通到终点的点做剪枝。</p>
+      </div>
+      <div class="step">
+        <span class="n">4</span>
+        <b>自适应加权 A*</b>
+        <p>根据地图障碍密度 ρ 与起终点距离 D 自适应计算 α、β 权重，分段连接路径点。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>项目结构</h2>
+    <pre><span class="c">ldnn-astar/</span>
+├─ docs/
+│  └─ README.md                       <span class="c"># 论文摘要</span>
+├─ dataset/
+│  └─ 50x30-sized-map.json            <span class="c"># 基准网格地图</span>
+└─ ldnn-astar/
+   ├─ auxiliary/
+   │  └─ plotting.py                  <span class="c"># A* vs LDNN-A* 可视化对比</span>
+   ├─ model/
+   │  └─ initial.py                   <span class="c"># DeepSeek LLM 客户端（deepseek-v4-pro）</span>
+   ├─ resources/
+   │  ├─ data_1500.py                 <span class="c"># few-shot 标准示例提示</span>
+   │  ├─ prompt.py                    <span class="c"># 路径点生成提示模板</span>
+   │  └─ trainset/                    <span class="c"># 神经网络训练集</span>
+   │     ├─ neural_trainset_100.json
+   │     └─ windows_trainset_100.json
+   └─ tasks/
+      ├─ main.py                      <span class="c"># 入口脚本</span>
+      ├─ task.py                      <span class="c"># Task 类：束搜索树生成</span>
+      └─ tools/
+         ├─ astar_with_waypoints.py   <span class="c"># 标准 A* 与自适应加权 A*</span>
+         ├─ filter.py                 <span class="c"># 三阶段路径点过滤器</span>
+         ├─ modules.py                <span class="c"># 候选生成 / 碰撞检测 / 打分</span>
+         └─ LSTM/
+            ├─ deter_weights.py       <span class="c"># DNN 属性评估模型 (2→20→10→1)</span>
+            ├─ neural_trainset.py     <span class="c"># DNN 训练数据（away / proximity）</span>
+            ├─ windows.py             <span class="c"># LSTM 窗口模型 (2×4 → LSTM16 → 1)</span>
+            └─ windows_trainset.py    <span class="c"># LSTM 训练数据</span></pre>
+  </section>
+
+  <section class="card">
+    <h2>关键模块</h2>
+    <table>
+      <tr><th>模块</th><th>文件</th><th>职责</th></tr>
+      <tr>
+        <td><code>generate</code></td>
+        <td><code>tools/modules.py</code></td>
+        <td>调用 LLM 生成候选路径点，并用正则解析 <code>Point</code> / <code>Thought</code>。</td>
+      </tr>
+      <tr>
+        <td><code>value</code></td>
+        <td><code>tools/modules.py</code></td>
+        <td>综合 <code>AwayFromFormer</code> 与 <code>ProximityToGoal</code>，用 DNN + LSTM 打分，含碰撞 / 绕路硬惩罚。</td>
+      </tr>
+      <tr>
+        <td><code>filter</code></td>
+        <td><code>tools/filter.py</code></td>
+        <td>去重 → <code>lm_filter</code>（LLM 复审）→ <code>geo_filter</code>（几何转角）→ <code>DirectToGoal</code> 剪枝。</td>
+      </tr>
+      <tr>
+        <td><code>llm_astar</code></td>
+        <td><code>tools/astar_with_waypoints.py</code></td>
+        <td>自适应加权 A*：根据地图特征计算 α、β，分段导向各路径点并连接。</td>
+      </tr>
+      <tr>
+        <td><code>astar</code></td>
+        <td><code>tools/astar_with_waypoints.py</code></td>
+        <td>标准 A* 基线，用于对比扩展节点数与峰值内存。</td>
+      </tr>
+      <tr>
+        <td><code>deepseek</code></td>
+        <td><code>model/initial.py</code></td>
+        <td>DeepSeek 大模型客户端封装（<code>deepseek-v4-pro</code>）。</td>
+      </tr>
+    </table>
+  </section>
+
+  <section class="card">
+    <h2>两个神经网络评估器</h2>
+    <div class="grid">
+      <div class="step">
+        <b><span class="dot p"></span>DNN · 局部几何</b>
+        <p>输入两个特征：<code>AwayFromFormer</code>（远离前点的归一化距离）与 <code>ProximityToGoal</code>（靠近终点的趋势），
+        结构为 <code>2 → 20 → 10 → 1</code>（sigmoid），输出单点评分。</p>
+      </div>
+      <div class="step">
+        <b><span class="dot p"></span>LSTM · 序列窗口</b>
+        <p>当路径上点数 ≥4 时，取最近 4 个点（2×4）作为窗口输入 <code>LSTM(16) → 1</code>（sigmoid），
+        判断整段是否「绕路」，与 DNN 评分取几何平均。</p>
+      </div>
+    </div>
+    <p class="note">两模型权重均为硬编码初始化后微调：DNN 使用 <code>away/proximity</code> 训练集，LSTM 使用窗口训练集。</p>
+  </section>
+
+  <section class="card">
+    <h2>评估结论</h2>
+    <p style="margin:0;font-size:15px">
+      在多种障碍布局的网格地图上，与 <strong>A*</strong>、<strong>LLM-A*</strong>、<strong>iLLM-A*</strong> 对比，
+      LDNN-A* 在多数场景下于<strong>节点扩展数</strong>与<strong>峰值内存</strong>上持平或更优，同时路径长度保持在任一方法最短路径的
+      <strong>7%</strong> 以内。消融实验表明，<strong>路径点过滤</strong>是控制搜索开销的主要因素。
+    </p>
+  </section>
+
+  <footer>LDNN-A* · 项目介绍页 · 依据 <code>docs/README.md</code> 与源码结构生成</footer>
+
+</div>
+</body>
+</html>
