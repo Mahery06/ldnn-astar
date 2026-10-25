@@ -56,13 +56,13 @@
 
   <header>
     <div class="logo">LDNN<em>-A*</em></div>
-    <div class="tagline">大语言模型 + 轻量神经网络 + 自适应加权 A* 的混合路径规划器</div>
+    <div class="tagline">大语言模型 + 轻量神经网络 + 自适应双加权 A* 的混合路径规划器</div>
     <div class="badges">
       <span class="badge">LLM 候选路径点</span>
       <span class="badge">DNN 局部几何评估</span>
       <span class="badge">LSTM 序列评估</span>
       <span class="badge">三阶段过滤</span>
-      <span class="badge">自适应加权 A*</span>
+      <span class="badge">自适应双加权 A*</span>
     </div>
   </header>
 
@@ -70,11 +70,11 @@
     <h2>摘要</h2>
     <p class="abstract">
       A* 是网格地图路径规划的标准算法，但其扩展和存储的节点数量会随地图尺寸与障碍物复杂度迅速增长，
-      限制了它在资源受限智能体上的使用。近期工作通过让大语言模型（LLM）提出中间路径点、把搜索切分为更短片段来降低开销。
-      然而 LLM 对空间的推理能力较弱，提出的路径点常出现错位或冗余，导致绕路、甚至比纯 A* 产生更多搜索开销。
+      限制了它在资源受限智能体上的使用。近期工作通过让大语言模型（LLM）提出中间路径点来引导搜索、降低开销。
+      然而 LLM 对空间的推理能力较弱，提出的路径点常出现错位或冗余，导致绕路并浪费搜索开销。
       本文提出 <strong>LDNN-A*</strong>：LLM 仅负责提出候选路径点，由轻量神经网络评估器决定保留哪些——
-      一个深度神经网络（DNN）评估每个候选点的局部几何，一个长短期记忆网络（LSTM）评估整条路径点序列。
-      选出的路径点再经三阶段过滤器剪枝，最终由自适应加权 A* 搜索连接。
+      一个深度神经网络（DNN）评估每个候选点的局部几何，一个长短期记忆网络（LSTM）评估其与最近路径点的一致性。
+      选出的路径点再经三阶段过滤器剪枝，最终引导自适应双加权 A* 搜索。
     </p>
   </section>
 
@@ -87,7 +87,7 @@
       <span class="arrow">→</span>
       <span class="node">三阶段过滤剪枝</span>
       <span class="arrow">→</span>
-      <span class="node hl">自适应加权 A* 连接</span>
+      <span class="node hl">自适应双加权 A* 连接</span>
     </div>
     <div class="grid" style="margin-top:18px">
       <div class="step">
@@ -98,7 +98,7 @@
       <div class="step">
         <span class="n">2</span>
         <b>神经网络打分</b>
-        <p>DNN 评估「远离前点 + 靠近终点」的局部几何；路径点 ≥4 时，LSTM 再评估整段序列质量。</p>
+        <p>DNN 评估「远离前点 + 靠近终点」的局部几何；路径点 ≥4 时，LSTM 再评估其与最近路径点的一致性。</p>
       </div>
       <div class="step">
         <span class="n">3</span>
@@ -107,7 +107,7 @@
       </div>
       <div class="step">
         <span class="n">4</span>
-        <b>自适应加权 A*</b>
+        <b>自适应双加权 A*</b>
         <p>根据地图障碍密度 ρ 与起终点距离 D 自适应计算 α、β 权重，分段连接路径点。</p>
       </div>
     </div>
@@ -135,7 +135,7 @@
       ├─ main.py                      <span class="c"># 入口脚本</span>
       ├─ task.py                      <span class="c"># Task 类：束搜索树生成</span>
       └─ tools/
-         ├─ astar_with_waypoints.py   <span class="c"># 标准 A* 与自适应加权 A*</span>
+         ├─ astar_with_waypoints.py   <span class="c"># 标准 A* 与自适应双加权 A*</span>
          ├─ filter.py                 <span class="c"># 三阶段路径点过滤器</span>
          ├─ modules.py                <span class="c"># 候选生成 / 碰撞检测 / 打分</span>
          └─ LSTM/
@@ -167,12 +167,12 @@
       <tr>
         <td><code>llm_astar</code></td>
         <td><code>tools/astar_with_waypoints.py</code></td>
-        <td>自适应加权 A*：根据地图特征计算 α、β，分段导向各路径点并连接。</td>
+        <td>自适应双加权 A*：根据地图特征计算 α、β，分段导向各路径点并连接。</td>
       </tr>
       <tr>
         <td><code>astar</code></td>
         <td><code>tools/astar_with_waypoints.py</code></td>
-        <td>标准 A* 基线，用于对比扩展节点数与峰值内存。</td>
+        <td>标准 A* 基线，用于对比扩展状态数与存储状态数。</td>
       </tr>
       <tr>
         <td><code>deepseek</code></td>
@@ -202,9 +202,10 @@
   <section class="card">
     <h2>评估结论</h2>
     <p style="margin:0;font-size:15px">
-      在多种障碍布局的网格地图上，与 <strong>A*</strong>、<strong>LLM-A*</strong>、<strong>iLLM-A*</strong> 对比，
-      LDNN-A* 在多数场景下于<strong>节点扩展数</strong>与<strong>峰值内存</strong>上持平或更优，同时路径长度保持在任一方法最短路径的
-      <strong>7%</strong> 以内。消融实验表明，<strong>路径点过滤</strong>是控制搜索开销的主要因素。
+      我们在 LLM-A* 基准的 1000 个测试样本上，将 LDNN-A* 与 <strong>A*</strong>、<strong>LLM-A*</strong>、<strong>iLLM-A*</strong> 对比。
+      平均而言，LDNN-A* 将<strong>扩展状态数</strong>与<strong>存储状态数</strong>分别降至 A* 的 <strong>27.3%</strong> 与
+      <strong>41.4%</strong>，为所有方法中最低，同时其路径长度仅比 A* 长 <strong>3.9%</strong>。
+      消融实验表明，<strong>路径点过滤</strong>贡献最大。
     </p>
   </section>
 
